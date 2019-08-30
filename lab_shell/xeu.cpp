@@ -5,6 +5,11 @@
 #include <cstdio>
 #include <sstream>
 
+#include <unistd.h> // Used: fork, execvp, dup
+#include  <fcntl.h> // Used: open, dup
+#include <sys/wait.h> // Used: wait
+#include  <sys/types.h> // Used: wait
+
 using namespace xeu_utils;
 using namespace std;
 
@@ -13,6 +18,7 @@ void io_explanation(const Command& command) {
   // Let's use this input as example: (ps aux >out >o2 <in 2>er >ou)
   // we would print "$       io(): [0] >out [1] >o2 [2] <in [3] 2>er [4] >ou"
   cout << "$       io():";
+
   for (size_t i = 0; i < command.io().size(); i++) {
     IOFile io = command.io()[i];
     cout << " [" << i << "] " << io.repr();
@@ -87,15 +93,56 @@ void commands_explanation(const vector<Command>& commands) {
   }
 }
 
+void redirectIO(Command& command) {
+  IOFile io = command.io()[0];
+  const char* path = io.path().c_str();
+  int fd_io;
+
+  if(io.is_output()) {
+    fd_io = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    dup2(fd_io, STDOUT_FILENO);
+  } else if(io.is_input()) {
+    fd_io = open(path, O_RDONLY);
+    dup2(fd_io, STDIN_FILENO);
+  }
+}
+
+void exec(Command& command) {  
+  const char * exec_file = command.name() != "bg" ? command.filename() : command.argv()[1]; 
+
+  if(execvp(exec_file, command.argv()) == -1){
+    perror("Error in exec");
+    exit(EXIT_FAILURE);
+  }
+}
+
 int main() {
-  // Waits for the user to input a command and parses it. Commands separated
-  // by pipe, "|", generate multiple commands. For example, try to input
-  //   ps aux | grep xeu
-  // commands.size() would be 2: (ps aux) and (grep xeu)
-  // If the user just presses ENTER without any command, commands.size() is 0
-  const vector<Command> commands = StreamParser().parse().commands();
+  while (true) {
+    printf("xeu$ ");
+    const vector<Command> commands = StreamParser().parse().commands();
 
-  commands_explanation(commands);
+    // commands_explanation(commands);
+    if (commands.size() == 1) {
+      pid_t process_id;
 
+      process_id = fork();
+      if (process_id == -1) {
+        perror("Error forking");
+        exit(EXIT_FAILURE);
+      }
+      Command command = commands[0];
+      if (process_id == 0){
+        if (command.io().size() > 0){
+          // io_explanation(command);
+          redirectIO(command);
+        }
+        exec(command);
+      } else {
+        wait(NULL);
+      }
+    } else {
+      // TODO pipe
+    } 
+  }
   return 0;
 }
