@@ -9,6 +9,7 @@
 #include  <fcntl.h> // Used: open, dup
 #include <sys/wait.h> // Used: wait
 #include  <sys/types.h> // Used: wait
+#include  <list> // Used: wait
 
 using namespace xeu_utils;
 using namespace std;
@@ -93,6 +94,13 @@ void commands_explanation(const vector<Command>& commands) {
   }
 }
 
+bool is_pid_running(pid_t pid) {
+    if (0 == kill(pid, 0))
+        return 1; // Process exists
+
+    return 0;
+}
+
 void redirectIO(Command& command) {
   IOFile io = command.io()[0];
   const char* path = io.path().c_str();
@@ -116,12 +124,27 @@ void exec(Command& command) {
   }
 }
 
+struct job {
+  pid_t pid;
+  string name;
+};
+
+
+void xjobs(list<job>& jobs) {
+  cout << jobs.size() << endl;
+  for(list<job>::iterator it=jobs.begin(); it != jobs.end(); ++it)
+    if (is_pid_running(it->pid)) {
+        cout << "pid: " << it->pid << " name: " << it->name << endl;
+    }
+}
+
+list<job> jobs;
+
 int main() {
-  while (true) {
+   while (true) {
     printf("xeu$ ");
     const vector<Command> commands = StreamParser().parse().commands();
 
-    // commands_explanation(commands);
     if (commands.size() == 1) {
       pid_t process_id;
 
@@ -132,13 +155,23 @@ int main() {
       }
       Command command = commands[0];
       if (process_id == 0){
-        if (command.io().size() > 0){
-          // io_explanation(command);
-          redirectIO(command);
-        }
-        exec(command);
+        if (command.name() == "xjobs") {
+          xjobs(jobs);
+        } else {
+          if (command.io().size() > 0){
+            // io_explanation(command);
+            redirectIO(command);
+          }
+          exec(command);
+        }   
       } else {
         wait(NULL);
+        if (command.name() == "bg") {
+          job j;
+          j.pid = process_id; j.name = command.argv()[1];
+          jobs.push_back(j);
+          cout << jobs.size() << endl;
+        }
       }
     } else {
       // TODO pipe
