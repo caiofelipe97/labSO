@@ -120,58 +120,34 @@ void redirectIO(Command& command) {
     dup2(fd_io, STDIN_FILENO);
   }
 }
-void wait_process(pid_t pid) {
-  waitpid(pid, NULL, 0);
-}
+
 void wait_bg_proc(pid_t pid) {
-  wait_process(pid);
-  for (int i = 0; i < jobs.size(); i++) {
-    if (jobs[i].pid == pid) {
-      jobs.remove(jobs[i])
+  waitpid(pid, NULL, 0);
+  for(list<job>::iterator it=jobs.begin(); it != jobs.end(); ++it){
+    if (it->pid == pid) {
+      cout << "erasing " << pid << endl;
+      jobs.erase(it);
       break;
     }
   }
 }
 
-void post_proc_cmd(Command& cmd, bool cmdRanInBg, pid_t pid) {
-  cmd.setRunning(true);
-  if (cmdRanInBg) {
-    job j;
-    j.pid = pid; 
-    j.name = cmd.argv()[1];
-    jobs.push_back(j);
-
-    thread bg_thread(wait_bg_proc, pid);
-    bg_thread.detach();
-  } else {
-    wait_process(pid);
-  }
-}
-
-pid_t exec_cmd(Command& cmd) {
-  pid_t pid;
-  if ((pid = fork()) < 0) {
-    cout << "could not execute command: " << cmd.filename() << endl;
-  } else if (pid == 0) {
-    execvp(cmd.filename(), cmd.argv());
-    if (errno == ENOENT) {
-      cerr << cmd.filename() << ": command not found" << endl;
-      exit(1);
+pid_t exec(Command& command) {  
+  if (command.name() == "bg") {
+    Command cmd = Command();
+    for (int i = 1; i < command.args().size(); i++) {
+      cmd.add_arg(command.args()[i]);
     }
+    command = cmd;
   }
-  return pid;
+
+  if(execvp(command.filename(), command.argv()) == -1){
+    perror("Error in exec");
+    exit(EXIT_FAILURE);
+  }
 }
 
-void process_cmd(Command& command) {
-  bool cmdShouldRunInBg = (command.name() == "bg");
-  const pid_t pid = exec_cmd(command);
-  post_proc_cmd(command, cmdShouldRunInBg, pid);
-}
-
-
-
-void xjobs(list<job>& jobs) {
-  cout << jobs.size() << endl;
+void xjobs() {
   for(list<job>::iterator it=jobs.begin(); it != jobs.end(); ++it){
         cout << "pid: " << it->pid << " name: " << it->name << endl;
   }
@@ -179,54 +155,41 @@ void xjobs(list<job>& jobs) {
 
 
 int main() {
-   while (true) {
-    printf("xeu$ ");
-    const vector<Command> commands = StreamParser().parse().commands();
-
-    if (commands.size() == 1) {
-      continue;
-    } else {
-     Command command = commands[0];
-     if (command.name() == "xjobs") {
-                 xjobs(jobs);
-     } else {
-        process_cmd(command);
-     }
-
-    }
-      /*
+    while (true) {
+      printf("xeu$ ");
+      const vector<Command> commands = StreamParser().parse().commands();
       pid_t process_id;
-
-      process_id = fork();
-      if (process_id == -1) {
-        perror("Error forking");
-        exit(EXIT_FAILURE);
-      }
-      
       Command command = commands[0];
-      if (process_id == 0){
-        if (command.name() == "xjobs") {
-          xjobs(jobs);
-        } else {
+
+      if (command.name() == "xjobs") {
+        xjobs();
+      } else {
+        process_id = fork();
+        if (process_id == -1) {
+          perror("Error forking");
+          exit(EXIT_FAILURE);
+        }
+        bool isBg = command.name() == "bg";
+        if (process_id == 0){
           if (command.io().size() > 0){
-            // io_explanation(command);
             redirectIO(command);
           }
           exec(command);
-        }   
-      } else {
-        wait(NULL);
-        if (command.name() == "bg") {
-          job j;
-          j.pid = process_id; 
-          j.name = command.argv()[1];
-          jobs.push_back(j);
-          cout << jobs.size() << endl;
+          
+        } else {
+          if (isBg) {
+            job j;
+            j.pid = process_id; 
+            j.name = command.argv()[1];
+            jobs.push_back(j);
+
+            thread bg_thread(wait_bg_proc, process_id);
+            bg_thread.detach();
+          } else {
+            wait(NULL);
+          }
         }
       }
-    } else {
-      // TODO pipe
     } 
-  }
-  return 0;
+  
 }
