@@ -10,9 +10,17 @@
 #include <sys/wait.h> // Used: wait
 #include  <sys/types.h> // Used: wait
 #include  <list> // Used: wait
+#include <thread>
 
 using namespace xeu_utils;
 using namespace std;
+
+struct job {
+  pid_t pid;
+  string name;
+};
+
+list<job> jobs;
 
 // This function is just to help you learn the useful methods from Command
 void io_explanation(const Command& command) {
@@ -95,8 +103,6 @@ void commands_explanation(const vector<Command>& commands) {
 }
 
 bool is_pid_running(pid_t pid) {
-    if (0 == kill(pid, 0))
-        return 1; // Process exists
 
     return 0;
 }
@@ -114,31 +120,63 @@ void redirectIO(Command& command) {
     dup2(fd_io, STDIN_FILENO);
   }
 }
-
-void exec(Command& command) {  
-  const char * exec_file = command.name() != "bg" ? command.filename() : command.argv()[1]; 
-
-  if(execvp(exec_file, command.argv()) == -1){
-    perror("Error in exec");
-    exit(EXIT_FAILURE);
+void wait_process(pid_t pid) {
+  waitpid(pid, NULL, 0);
+}
+void wait_bg_proc(pid_t pid) {
+  wait_process(pid);
+  for (int i = 0; i < jobs.size(); i++) {
+    if (jobs[i].pid == pid) {
+      jobs.remove(jobs[i])
+      break;
+    }
   }
 }
 
-struct job {
+void post_proc_cmd(Command& cmd, bool cmdRanInBg, pid_t pid) {
+  cmd.setRunning(true);
+  if (cmdRanInBg) {
+    job j;
+    j.pid = pid; 
+    j.name = cmd.argv()[1];
+    jobs.push_back(j);
+
+    thread bg_thread(wait_bg_proc, pid);
+    bg_thread.detach();
+  } else {
+    wait_process(pid);
+  }
+}
+
+pid_t exec_cmd(Command& cmd) {
   pid_t pid;
-  string name;
-};
+  if ((pid = fork()) < 0) {
+    cout << "could not execute command: " << cmd.filename() << endl;
+  } else if (pid == 0) {
+    execvp(cmd.filename(), cmd.argv());
+    if (errno == ENOENT) {
+      cerr << cmd.filename() << ": command not found" << endl;
+      exit(1);
+    }
+  }
+  return pid;
+}
+
+void process_cmd(Command& command) {
+  bool cmdShouldRunInBg = (command.name() == "bg");
+  const pid_t pid = exec_cmd(command);
+  post_proc_cmd(command, cmdShouldRunInBg, pid);
+}
+
 
 
 void xjobs(list<job>& jobs) {
   cout << jobs.size() << endl;
-  for(list<job>::iterator it=jobs.begin(); it != jobs.end(); ++it)
-    if (is_pid_running(it->pid)) {
+  for(list<job>::iterator it=jobs.begin(); it != jobs.end(); ++it){
         cout << "pid: " << it->pid << " name: " << it->name << endl;
-    }
+  }
 }
 
-list<job> jobs;
 
 int main() {
    while (true) {
@@ -146,6 +184,17 @@ int main() {
     const vector<Command> commands = StreamParser().parse().commands();
 
     if (commands.size() == 1) {
+      continue;
+    } else {
+     Command command = commands[0];
+     if (command.name() == "xjobs") {
+                 xjobs(jobs);
+     } else {
+        process_cmd(command);
+     }
+
+    }
+      /*
       pid_t process_id;
 
       process_id = fork();
@@ -153,6 +202,7 @@ int main() {
         perror("Error forking");
         exit(EXIT_FAILURE);
       }
+      
       Command command = commands[0];
       if (process_id == 0){
         if (command.name() == "xjobs") {
@@ -168,7 +218,8 @@ int main() {
         wait(NULL);
         if (command.name() == "bg") {
           job j;
-          j.pid = process_id; j.name = command.argv()[1];
+          j.pid = process_id; 
+          j.name = command.argv()[1];
           jobs.push_back(j);
           cout << jobs.size() << endl;
         }
